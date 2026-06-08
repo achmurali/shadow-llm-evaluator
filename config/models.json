@@ -1,0 +1,7 @@
+{
+  "models": {
+    "primary-llama": { "inferenceName": "llama3.3-70b-instruct" },
+    "candidate-claude": { "inferenceName": "anthropic-claude-3.5-haiku" },
+    "candidate-mistral": { "inferenceName": "mistral-nemo-instruct" }
+  }
+}
