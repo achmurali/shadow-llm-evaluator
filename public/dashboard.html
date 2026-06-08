@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Shadow LLM Evaluator</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; color: #1a1a1a; }
+    h1 { font-size: 20px; } h2 { font-size: 15px; margin-top: 28px; }
+    table { border-collapse: collapse; margin-top: 8px; }
+    th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: right; font-variant-numeric: tabular-nums; }
+    th:first-child, td:first-child { text-align: left; }
+    .pills span { display: inline-block; padding: 4px 10px; margin-right: 8px; border-radius: 12px; background: #eef; }
+    input { padding: 6px; width: 340px; } button { padding: 6px 12px; }
+    pre { background: #f6f6f6; padding: 12px; overflow:auto; max-height: 360px; }
+  </style>
+</head>
+<body>
+  <h1>Shadow LLM Evaluator</h1>
+
+  <h2>Status</h2>
+  <div class="pills" id="status"></div>
+  <div>Effective sample rate: <b id="rate">–</b></div>
+
+  <h2>Candidate performance</h2>
+  <table id="candidates">
+    <thead><tr>
+      <th>Candidate</th><th>Total</th><th>Completed</th><th>Failed</th>
+      <th>Pass rate</th><th>Avg composite</th><th>Cand latency (ms)</th><th>Primary latency (ms)</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Request lookup</h2>
+  <input id="rid" placeholder="paste request id (X-Request-Id)" />
+  <button onclick="lookup()">Look up</button>
+  <pre id="lookup"></pre>
+
+  <script>
+    const pct = (x) => (Number(x) * 100).toFixed(1) + '%';
+    const num = (x) => Number(x).toFixed(0);
+
+    async function refresh() {
+      const s = await (await fetch('/v1/stats')).json();
+      document.getElementById('rate').textContent = pct(s.effectiveSampleRate);
+      document.getElementById('status').innerHTML = Object.entries(s.statusBreakdown)
+        .map(([k, v]) => `<span>${k}: <b>${v}</b></span>`).join('');
+      document.querySelector('#candidates tbody').innerHTML = s.perCandidate.map((c) => `
+        <tr><td>${c.candidate_model}</td><td>${c.total}</td><td>${c.completed}</td><td>${c.failed}</td>
+        <td>${pct(c.pass_rate)}</td><td>${Number(c.avg_composite).toFixed(3)}</td>
+        <td>${num(c.avg_candidate_latency_ms)}</td><td>${num(c.avg_primary_latency_ms)}</td></tr>`).join('');
+    }
+    async function lookup() {
+      const id = document.getElementById('rid').value.trim();
+      if (!id) return;
+      const res = await fetch('/v1/requests/' + id);
+      document.getElementById('lookup').textContent = JSON.stringify(await res.json(), null, 2);
+    }
+    refresh(); setInterval(refresh, 3000);
+  </script>
+</body>
+</html>
