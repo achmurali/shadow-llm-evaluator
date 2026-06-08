@@ -11,9 +11,10 @@ against the primary using a **deterministic, pluggable heuristic engine**. Evalu
 are persisted to Postgres, queryable per request, and surfaced as **real-time metrics** via a
 lightweight built-in dashboard.
 
-The service is deployed on DigitalOcean, with models served through **DO serverless inference**
-(OpenAI-compatible API, single model-access key). It is **horizontally scalable** by
-construction and its operational config is **runtime-editable** via an endpoint.
+The service **runs locally via Docker Compose**. Models are served through **DO serverless
+inference** (OpenAI-compatible API, single model-access key) — the one external dependency.
+The design is **horizontally scalable** by construction and its operational config is
+**runtime-editable** via an endpoint.
 
 Both models are assumed to return valid JSON payloads.
 
@@ -22,14 +23,14 @@ Both models are assumed to return valid JSON payloads.
 - **Language/runtime:** Node.js + TypeScript
 - **HTTP framework:** Fastify (schema validation, fast async)
 - **Queue:** BullMQ on Redis
-- **Database:** PostgreSQL (DO Managed Postgres in prod)
+- **Database:** PostgreSQL (local container)
 - **Model backend:** DigitalOcean serverless inference (OpenAI-compatible). One model-access key.
 - **Dashboard:** built-in static page + JSON `/v1/stats` endpoint (aggregates from Postgres). No
   Prometheus/Grafana.
 - **Validation:** zod
 - **Testing:** Vitest + supertest + testcontainers
 - **Packaging:** Docker (multi-stage) + docker-compose
-- **Deploy target:** DigitalOcean Droplet running docker-compose; Managed Postgres + Managed Redis
+- **Run target:** local Docker Compose (api + worker + postgres + redis). No cloud deploy in v1.
 
 > **Implementation note:** Confirm the exact DO serverless-inference base URL and auth header
 > against current DO docs at implementation time; that API is evolving. The provider client is
@@ -42,8 +43,8 @@ Both models are assumed to return valid JSON payloads.
 |---|---|
 | **API service** (`src/api`) | Serves `/v1/chat`, `/v1/config`, `/v1/requests/:id`, `/v1/evaluations/:id`, `/v1/stats`, the dashboard page, `/healthz`. Calls primary, returns immediately, makes sampling decision, writes request + queued eval rows, enqueues jobs. Stateless. |
 | **Worker** (`src/worker`) | BullMQ consumer. Calls the candidate via DO inference, runs the heuristic engine, updates the eval row (status + scores + verdict) in Postgres. |
-| **Redis** | BullMQ job queue only. Managed Redis in prod. |
-| **Postgres** | `requests`, `evaluations`, and dynamic `config` tables. Managed Postgres in prod. |
+| **Redis** | BullMQ job queue only. Local container. |
+| **Postgres** | `requests`, `evaluations`, and dynamic `config` tables. Local container. |
 | **DO serverless inference** | OpenAI-compatible model backend. |
 
 **Repo structure:** single TypeScript package with two entrypoints (`src/api`, `src/worker`)
@@ -224,9 +225,10 @@ One datastore, one UI, no extra containers.
 ## 10. Scalability
 
 Horizontally scalable by construction:
-- **API**: stateless (sampling is a per-request draw). Run N replicas behind a **DO Load Balancer**.
+- **API**: stateless (sampling is a per-request draw). Run N replicas — locally via
+  `docker-compose --scale`, behind any load balancer in a real deploy.
 - **Worker**: N BullMQ workers share the Redis queue; work distributes automatically.
-- **All shared state** lives in Postgres + Redis (external/managed) — nothing node-local.
+- **All shared state** lives in Postgres + Redis — nothing node-local.
 - **Idempotency**: `jobId = evalId` (the eval row is created before enqueue) — a duplicated/retried
   job maps to one row; the worker's status check + single-row update prevents double processing.
 - **Dynamic config** is shared via Postgres (§7), so all replicas converge within the cache TTL.
@@ -265,14 +267,16 @@ Horizontally scalable by construction:
 
 **Test models are deterministic mocks** — no real keys/tokens in CI.
 
-## 13. Deployment (DigitalOcean)
+## 13. Running Locally
 
-- **`docker-compose.yml`** runs api + worker (and redis + postgres locally; in prod, env points
-  at Managed Redis/Postgres). Multi-stage Dockerfiles.
-- A **Droplet** runs the same compose; `.env` holds the DO inference key + Managed connection
-  strings. **Local == prod.**
+- **`docker-compose.yml`** runs everything locally: api + worker + postgres + redis. Multi-stage
+  Dockerfiles.
+- A single **`.env`** holds the `DO_INFERENCE_BASE_URL` + `DO_INFERENCE_KEY` (the only external
+  dependency) and local Postgres/Redis URLs.
+- `docker-compose up` brings up the full stack; migrations run on start.
 - Horizontal scaling demoed via `docker-compose up --scale api=N --scale worker=M`.
-- **README**: setup, full env reference, local run, DO deploy steps, scaling instructions.
+- **README**: setup, full env reference, how to run, how to exercise `/v1/chat`, how to read the
+  dashboard, scaling instructions.
 - **Architecture diagram**: Mermaid in README (+ rendered image).
 
 ## 14. Out of Scope (YAGNI for v1)
@@ -281,3 +285,6 @@ Horizontally scalable by construction:
 - Auth/multi-tenancy beyond the optional static `AUTH_KEY` + admin key.
 - LLM-as-judge / semantic-embedding scoring (requirement is *deterministic* heuristics).
 - Prometheus/Grafana / autoscaling / Kubernetes (the design supports scaling; not built for v1).
+- **Cloud deployment** (DigitalOcean Droplet, Managed Postgres/Redis) — v1 runs locally only; the
+  Compose setup ports to a Droplet later with no code change (swap local DB/Redis URLs for managed
+  ones). DO serverless inference is the sole external dependency even locally.
