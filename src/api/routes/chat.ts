@@ -43,7 +43,12 @@ export function registerChatRoute(app: FastifyInstance, deps: AppDeps): void {
     const primaryLatencyMs = Date.now() - start;
 
     const requestId = uuid();
-    const forced = String(req.headers[config.sampling.forceHeader] ?? '') === 'force';
+    // Force a shadow evaluation regardless of sample rate, via any of:
+    //   header  <forceHeader>: force   |  query  ?force=true   |  body  {"force": true}
+    const forced =
+      String(req.headers[config.sampling.forceHeader] ?? '') === 'force' ||
+      String((req.query as Record<string, unknown> | undefined)?.force ?? '') === 'true' ||
+      (body as { force?: unknown }).force === true;
     const sampled = candidates.length > 0 &&
       shouldSample(config.sampling, { model: body.model, route: '/v1/chat', forced });
 

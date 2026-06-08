@@ -26,7 +26,7 @@ export type DynamicConfig = z.infer<typeof DynamicConfigSchema>;
 
 export const DEFAULT_CONFIG: DynamicConfig = {
   sampling: { rate: 0.2, overrides: { model: {}, route: {} }, forceHeader: 'x-shadow-eval' },
-  defaultCandidates: ['candidate-claude'],
+  defaultCandidates: ['candidate-mistral'],
   heuristics: {
     verdictThreshold: 0.8,
     rules: {

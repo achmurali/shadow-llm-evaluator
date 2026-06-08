@@ -13,6 +13,12 @@ describe('extractComparable', () => {
     expect(c.parseError).toBe(true);
     expect(c.content).toBeNull();
   });
+  it('parses JSON wrapped in a markdown code fence', () => {
+    const c = extractComparable({ choices: [{ message: { role: 'assistant',
+      content: '```json\n{"a":1,"b":"x"}\n```' } }] });
+    expect(c.content).toEqual({ a: 1, b: 'x' });
+    expect(c.parseError).toBe(false);
+  });
   it('captures tool calls', () => {
     const c = extractComparable({ choices: [{ message: { role: 'assistant', content: null,
       tool_calls: [{ type: 'function', function: { name: 'f', arguments: '{"x":1}' } }] } }] });

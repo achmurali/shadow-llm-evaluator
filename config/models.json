@@ -1,7 +1,10 @@
 {
   "models": {
-    "primary-llama": { "inferenceName": "llama3.3-70b-instruct" },
-    "candidate-claude": { "inferenceName": "anthropic-claude-3.5-haiku" },
-    "candidate-mistral": { "inferenceName": "mistral-nemo-instruct" }
+    "primary-llama":     { "inferenceName": "llama3.3-70b-instruct" },
+    "candidate-mistral":  { "inferenceName": "mistral-3-14B" },
+    "candidate-deepseek": { "inferenceName": "deepseek-3.2" },
+    "candidate-gemma":    { "inferenceName": "gemma-4-31B-it" },
+    "candidate-claude":   { "inferenceName": "anthropic-claude-opus-4.7" },
+    "candidate-gpt":      { "inferenceName": "openai-gpt-4o-mini" }
   }
 }

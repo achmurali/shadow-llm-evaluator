@@ -49,3 +49,12 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+
+  # Web UI for browsing the Postgres database — http://localhost:8081
+  pgweb:
+    image: sosedoff/pgweb
+    environment:
+      PGWEB_DATABASE_URL: postgres://shadow:shadow@postgres:5432/shadow?sslmode=disable
+    ports: ["8081:8081"]
+    depends_on:
+      postgres: { condition: service_healthy }
