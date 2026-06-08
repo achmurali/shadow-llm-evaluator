@@ -49,8 +49,18 @@ cp .env.example .env          # set DO_INFERENCE_KEY; DATABASE_URL/REDIS_URL alr
 npm install && npm run build
 npm run start:api &           # http://localhost:8080
 npm run start:worker &
+npm run queue:board &         # http://localhost:8082  (Bull Board queue dashboard)
 curl localhost:8080/healthz
 ```
+
+## Web UIs
+| URL | What |
+|-----|------|
+| http://localhost:8080/ | Dashboard — candidate metrics + per-request lookup |
+| http://localhost:8082/ | **Bull Board** — live BullMQ queue (active / completed / failed jobs, retries) |
+| http://localhost:8081/ | **pgweb** — browse the Postgres `requests` / `evaluations` / `config` tables (Docker compose only; or run `pgweb` natively) |
+
+With Docker, `docker compose up` starts all of these (api, worker, postgres, redis, pgweb, queue-board).
 
 ### Example request
 ```bash

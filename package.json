@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start:api": "node --env-file-if-exists=.env dist/api/server.js",
@@ -13,10 +15,14 @@
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
+    "queue:board": "node --env-file-if-exists=.env scripts/queue-board.mjs",
     "lint": "eslint . --ext .ts"
   },
   "dependencies": {
+    "@bull-board/api": "^7.2.1",
+    "@bull-board/express": "^7.2.1",
     "bullmq": "^5.34.0",
+    "express": "^5.2.1",
     "fastify": "^5.2.0",
     "ioredis": "^5.4.1",
     "pg": "^8.13.1",
@@ -26,10 +32,10 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
+    "@types/supertest": "^6.0.2",
     "@types/uuid": "^10.0.0",
     "eslint": "^9.17.0",
     "supertest": "^7.0.0",
-    "@types/supertest": "^6.0.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

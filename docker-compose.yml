@@ -58,3 +58,14 @@ services:
     ports: ["8081:8081"]
     depends_on:
       postgres: { condition: service_healthy }
+
+  # Bull Board — live view of the BullMQ evaluation queue — http://localhost:8082
+  queue-board:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    command: ["node", "scripts/queue-board.mjs"]
+    environment:
+      REDIS_URL: redis://redis:6379
+      BOARD_PORT: 8082
+    ports: ["8082:8082"]
+    depends_on:
+      redis: { condition: service_healthy }

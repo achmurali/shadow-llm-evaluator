@@ -17,5 +17,6 @@ COPY --from=build /app/dist ./dist
 COPY config ./config
 COPY db ./db
 COPY public ./public
-# default command is the API; compose overrides for the worker
+COPY scripts ./scripts
+# default command is the API; compose overrides for the worker / queue board
 CMD ["node", "dist/api/server.js"]
