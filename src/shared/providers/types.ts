@@ -10,7 +10,6 @@ export interface ProviderChatRequest {
 /** OpenAI-compatible chat completion (the parts we use). */
 export interface ProviderChatResponse {
   choices: Array<{ message: ChatMessage }>;
-  [k: string]: Json | undefined;
 }
 
 export interface ModelProvider {
