@@ -74,8 +74,11 @@ numeric-tolerance, tool-calls). The engine combines enabled rules by weight into
 ## Scaling
 Stateless API + N BullMQ workers share Postgres/Redis. Demo locally:
 ```bash
-docker compose up -d --scale api=2 --scale worker=3
+docker compose up -d --scale worker=3
 ```
+The worker is the horizontally-scalable unit (N workers share the Redis queue). The API is
+stateless and scales behind a load balancer in a real deploy; locally it runs as a single
+published instance.
 
 ## Tests
 ```bash

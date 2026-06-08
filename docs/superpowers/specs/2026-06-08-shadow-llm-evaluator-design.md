@@ -225,9 +225,10 @@ One datastore, one UI, no extra containers.
 ## 10. Scalability
 
 Horizontally scalable by construction:
-- **API**: stateless (sampling is a per-request draw). Run N replicas — locally via
-  `docker-compose --scale`, behind any load balancer in a real deploy.
-- **Worker**: N BullMQ workers share the Redis queue; work distributes automatically.
+- **API**: stateless (sampling is a per-request draw). Scales behind a load balancer in a real
+  deploy; locally it runs as a single published instance (fixed host port).
+- **Worker**: N BullMQ workers share the Redis queue; work distributes automatically. This is the
+  horizontally-scalable unit locally — `docker compose up -d --scale worker=N`.
 - **All shared state** lives in Postgres + Redis — nothing node-local.
 - **Idempotency**: `jobId = evalId` (the eval row is created before enqueue) — a duplicated/retried
   job maps to one row; the worker's status check + single-row update prevents double processing.
@@ -274,7 +275,9 @@ Horizontally scalable by construction:
 - A single **`.env`** holds the `DO_INFERENCE_BASE_URL` + `DO_INFERENCE_KEY` (the only external
   dependency) and local Postgres/Redis URLs.
 - `docker-compose up` brings up the full stack; migrations run on start.
-- Horizontal scaling demoed via `docker-compose up --scale api=N --scale worker=M`.
+- Horizontal scaling demoed via `docker compose up -d --scale worker=N` (the worker is the
+  scalable unit locally; the API runs as a single published instance and scales behind an LB in a
+  real deploy).
 - **README**: setup, full env reference, how to run, how to exercise `/v1/chat`, how to read the
   dashboard, scaling instructions.
 - **Architecture diagram**: Mermaid in README (+ rendered image).

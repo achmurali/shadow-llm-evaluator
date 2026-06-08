@@ -16,7 +16,7 @@ export interface ProcessorDeps {
   evalsRepo: EvaluationsRepo;
 }
 
-export async function processJob(evalId: string, deps: ProcessorDeps): Promise<void> {
+export async function processJob(evalId: string, deps: ProcessorDeps, isFinalAttempt = true): Promise<void> {
   const evalRow = await deps.evalsRepo.get(evalId);
   if (!evalRow) return;                       // nothing to do
   if (evalRow.status === 'completed') return; // idempotent: already done
@@ -46,7 +46,8 @@ export async function processJob(evalId: string, deps: ProcessorDeps): Promise<v
       candidateLatencyMs
     });
   } catch (err) {
-    await deps.evalsRepo.fail(evalId, String(err));
+    // Keep the eval 'running' across retries; only mark 'failed' on the final attempt (spec §11).
+    if (isFinalAttempt) await deps.evalsRepo.fail(evalId, String(err));
     throw err; // rethrow so BullMQ records the attempt and retries
   }
 }

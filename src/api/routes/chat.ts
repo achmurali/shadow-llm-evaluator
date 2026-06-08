@@ -37,7 +37,8 @@ export function registerChatRoute(app: FastifyInstance, deps: AppDeps): void {
         messages: body.messages, tools: body.tools, response_format: body.response_format, temperature: body.temperature
       });
     } catch (err) {
-      return reply.code(502).send({ error: 'primary model call failed', detail: String(err) });
+      req.log.error({ err }, 'primary model call failed');
+      return reply.code(502).send({ error: 'primary model call failed' });
     }
     const primaryLatencyMs = Date.now() - start;
 

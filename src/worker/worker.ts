@@ -25,7 +25,11 @@ async function main() {
 
   const worker = new Worker<EvalJob>(
     QUEUE_NAME,
-    async (job) => { await processJob(job.data.evalId, deps); },
+    async (job) => {
+      const attempts = job.opts.attempts ?? 1;
+      const isFinal = (job.attemptsMade ?? 0) + 1 >= attempts;
+      await processJob(job.data.evalId, deps, isFinal);
+    },
     { connection: createConnection(env.REDIS_URL), concurrency: env.WORKER_CONCURRENCY }
   );
 

@@ -496,9 +496,9 @@ export interface Catalog {
 export function loadCatalog(raw: unknown): Catalog {
   const { models } = schema.parse(raw);
   return {
-    has: (id) => id in models,
+    has: (id) => Object.hasOwn(models, id),
     resolve: (id) => {
-      const m = models[id];
+      const m = Object.hasOwn(models, id) ? models[id] : undefined;
       if (!m) throw new Error(`unknown model: ${id}`);
       return m.inferenceName;
     },
@@ -659,7 +659,18 @@ export function createPool(databaseUrl: string): Pool {
 
 export async function applySchema(pool: Pool, schemaPath = 'db/schema.sql'): Promise<void> {
   const sql = readFileSync(schemaPath, 'utf8');
-  await pool.query(sql);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [727274]);
+    await client.query(sql);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 ```
 
@@ -2261,7 +2272,8 @@ export function registerChatRoute(app: FastifyInstance, deps: AppDeps): void {
         messages: body.messages, tools: body.tools, response_format: body.response_format, temperature: body.temperature
       });
     } catch (err) {
-      return reply.code(502).send({ error: 'primary model call failed', detail: String(err) });
+      req.log.error({ err }, 'primary model call failed');
+      return reply.code(502).send({ error: 'primary model call failed' });
     }
     const primaryLatencyMs = Date.now() - start;
 
@@ -2524,9 +2536,26 @@ describe('processJob', () => {
     const cfgService = new ConfigService(new ConfigRepo(pool), 5000);
     const deps = { pool, provider, catalog, configService: cfgService, requestsRepo: rr, evalsRepo: er, timeoutMs: 30000 };
 
-    await expect(processJob('we2', deps as any)).rejects.toThrow('boom'); // rethrow so BullMQ retries
+    await expect(processJob('we2', deps as any, true)).rejects.toThrow('boom'); // rethrow so BullMQ retries
     const row = await er.get('we2');
     expect(row?.status).toBe('failed');
+  });
+
+  it('stays running (not failed) when a non-final attempt throws', async () => {
+    const rr = new RequestsRepo(pool), er = new EvaluationsRepo(pool);
+    await rr.insert({ requestId: 'wr3', primaryModel: 'primary', messages: [], primaryLatencyMs: 10, sampled: true,
+      primaryResponse: { choices: [{ message: { role: 'assistant', content: '{"a":1}' } }] } });
+    await er.enqueue({ evalId: 'we3', requestId: 'wr3', candidateModel: 'cand' });
+
+    const provider = { chat: async () => { throw new Error('boom'); } };
+    const catalog = loadCatalog({ models: { cand: { inferenceName: 'CAND' } } });
+    const cfgService = new ConfigService(new ConfigRepo(pool), 5000);
+    const deps = { pool, provider, catalog, configService: cfgService, requestsRepo: rr, evalsRepo: er, timeoutMs: 30000 };
+
+    await expect(processJob('we3', deps as any, false)).rejects.toThrow('boom');
+    const row = await er.get('we3');
+    expect(row?.status).toBe('running'); // not failed: retries remain
+    expect(row?.error).toBeNull();
   });
 });
 ```
@@ -2554,7 +2583,7 @@ export interface ProcessorDeps {
   evalsRepo: EvaluationsRepo;
 }
 
-export async function processJob(evalId: string, deps: ProcessorDeps): Promise<void> {
+export async function processJob(evalId: string, deps: ProcessorDeps, isFinalAttempt = true): Promise<void> {
   const evalRow = await deps.evalsRepo.get(evalId);
   if (!evalRow) return;                       // nothing to do
   if (evalRow.status === 'completed') return; // idempotent: already done
@@ -2584,7 +2613,8 @@ export async function processJob(evalId: string, deps: ProcessorDeps): Promise<v
       candidateLatencyMs
     });
   } catch (err) {
-    await deps.evalsRepo.fail(evalId, String(err));
+    // Keep the eval 'running' across retries; only mark 'failed' on the final attempt (spec §11).
+    if (isFinalAttempt) await deps.evalsRepo.fail(evalId, String(err));
     throw err; // rethrow so BullMQ records the attempt and retries
   }
 }
@@ -2634,7 +2664,11 @@ async function main() {
 
   const worker = new Worker<EvalJob>(
     QUEUE_NAME,
-    async (job) => { await processJob(job.data.evalId, deps); },
+    async (job) => {
+      const attempts = job.opts.attempts ?? 1;
+      const isFinal = (job.attemptsMade ?? 0) + 1 >= attempts;
+      await processJob(job.data.evalId, deps, isFinal);
+    },
     { connection: createConnection(env.REDIS_URL), concurrency: env.WORKER_CONCURRENCY }
   );
 
@@ -3189,9 +3223,11 @@ numeric-tolerance, tool-calls). The engine combines enabled rules by weight into
 `0–1` score and a pass/fail verdict. Add a dimension = add one rule file + register it.
 
 ## Scaling
-Stateless API + N BullMQ workers share Postgres/Redis. Demo locally:
+Stateless API + N BullMQ workers share Postgres/Redis. The worker is the horizontally-scalable
+unit locally (N workers share the Redis queue); the API runs as a single published instance and
+scales behind a load balancer in a real deploy. Demo locally:
 ```bash
-docker compose up -d --scale api=2 --scale worker=3
+docker compose up -d --scale worker=3
 ```
 
 ## Tests

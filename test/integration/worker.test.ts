@@ -51,8 +51,25 @@ describe('processJob', () => {
     const cfgService = new ConfigService(new ConfigRepo(pool), 5000);
     const deps = { pool, provider, catalog, configService: cfgService, requestsRepo: rr, evalsRepo: er, timeoutMs: 30000 };
 
-    await expect(processJob('b2222222-2222-2222-2222-222222222222', deps as any)).rejects.toThrow('boom'); // rethrow so BullMQ retries
+    await expect(processJob('b2222222-2222-2222-2222-222222222222', deps as any, true)).rejects.toThrow('boom'); // rethrow so BullMQ retries
     const row = await er.get('b2222222-2222-2222-2222-222222222222');
     expect(row?.status).toBe('failed');
+  });
+
+  it('stays running (not failed) when a non-final attempt throws', async () => {
+    const rr = new RequestsRepo(pool), er = new EvaluationsRepo(pool);
+    await rr.insert({ requestId: 'a3333333-3333-3333-3333-333333333333', primaryModel: 'primary', messages: [], primaryLatencyMs: 10, sampled: true,
+      primaryResponse: { choices: [{ message: { role: 'assistant', content: '{"a":1}' } }] } });
+    await er.enqueue({ evalId: 'b3333333-3333-3333-3333-333333333333', requestId: 'a3333333-3333-3333-3333-333333333333', candidateModel: 'cand' });
+
+    const provider = { chat: async () => { throw new Error('boom'); } };
+    const catalog = loadCatalog({ models: { cand: { inferenceName: 'CAND' } } });
+    const cfgService = new ConfigService(new ConfigRepo(pool), 5000);
+    const deps = { pool, provider, catalog, configService: cfgService, requestsRepo: rr, evalsRepo: er, timeoutMs: 30000 };
+
+    await expect(processJob('b3333333-3333-3333-3333-333333333333', deps as any, false)).rejects.toThrow('boom');
+    const row = await er.get('b3333333-3333-3333-3333-333333333333');
+    expect(row?.status).toBe('running'); // not failed: retries remain
+    expect(row?.error).toBeNull();
   });
 });
