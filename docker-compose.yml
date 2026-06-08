@@ -11,6 +11,7 @@ services:
       interval: 3s
       timeout: 3s
       retries: 10
+
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
@@ -19,3 +20,32 @@ services:
       interval: 3s
       timeout: 3s
       retries: 10
+
+  api:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    command: ["node", "dist/api/server.js"]
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://shadow:shadow@postgres:5432/shadow
+      REDIS_URL: redis://redis:6379
+      DO_INFERENCE_BASE_URL: ${DO_INFERENCE_BASE_URL}
+      DO_INFERENCE_KEY: ${DO_INFERENCE_KEY}
+      ADMIN_KEY: ${ADMIN_KEY:-admin-secret}
+      AUTH_KEY: ${AUTH_KEY:-}
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    command: ["node", "dist/worker/worker.js"]
+    environment:
+      DATABASE_URL: postgres://shadow:shadow@postgres:5432/shadow
+      REDIS_URL: redis://redis:6379
+      DO_INFERENCE_BASE_URL: ${DO_INFERENCE_BASE_URL}
+      DO_INFERENCE_KEY: ${DO_INFERENCE_KEY}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-5}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
