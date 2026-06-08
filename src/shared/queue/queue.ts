@@ -3,9 +3,20 @@ import { Queue, Worker, JobsOptions, ConnectionOptions } from 'bullmq';
 export const QUEUE_NAME = 'evaluations';
 export interface EvalJob { evalId: string; }
 
-/** BullMQ requires maxRetriesPerRequest=null on the connection it owns. */
+/** Parse a redis:// URL into BullMQ connection options.
+ *  (ioredis options don't accept a `url` field, so passing one would silently
+ *  connect to localhost regardless of REDIS_URL.) maxRetriesPerRequest=null is
+ *  required by BullMQ for the connection it owns. */
 export function createConnection(redisUrl: string): ConnectionOptions {
-  return { url: redisUrl, maxRetriesPerRequest: null } as ConnectionOptions;
+  const u = new URL(redisUrl);
+  return {
+    host: u.hostname,
+    port: Number(u.port || 6379),
+    username: u.username || undefined,
+    password: u.password || undefined,
+    db: u.pathname.length > 1 ? Number(u.pathname.slice(1)) : undefined,
+    maxRetriesPerRequest: null
+  } as ConnectionOptions;
 }
 
 export function createQueue(redisUrl: string): Queue<EvalJob> {
