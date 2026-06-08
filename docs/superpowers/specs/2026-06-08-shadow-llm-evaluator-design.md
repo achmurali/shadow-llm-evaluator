@@ -211,14 +211,18 @@ table is empty, the service seeds and serves built-in defaults.
 
 No Prometheus/Grafana. Every aggregate is a SQL `GROUP BY` over `requests` / `evaluations`.
 
-- **`GET /v1/stats`** — JSON aggregates: agreement rate, avg composite + per-rule scores,
-  pass/fail counts, candidate error rate, primary-vs-candidate latency, throughput, effective
-  sampling rate, status breakdown (queued/running/completed/failed). Supports a time-window /
-  candidate-model filter.
+- **`GET /v1/stats`** — JSON aggregates computed live from Postgres. **Delivered (v1):** per
+  candidate — total / completed / failed counts, pass rate, average composite score, average
+  candidate-vs-primary latency; plus a global status breakdown (queued/running/completed/failed)
+  and the effective sampling rate. (Candidate error rate is `failed / total`, derivable from the
+  per-candidate counts the dashboard already shows.)
+- **Future enhancements (not in v1):** per-rule score breakdown, request throughput over time, and
+  `?since=` / `?candidate=` query filters. Deferred to keep v1 focused — the delivered aggregates
+  already answer "how is each candidate performing vs the primary."
 - **`public/dashboard.html`** — a static page served by the API that polls `/v1/stats` every few
-  seconds (charts via a CDN chart lib; tables/sparklines acceptable) for "real-time" metrics,
-  plus a **per-request lookup** box (paste a `requestId` → renders its candidate evals + statuses
-  via `/v1/requests/:id`).
+  seconds (a plain per-candidate table + status pills) for "real-time" metrics, plus a
+  **per-request lookup** box (paste a `requestId` → renders its candidate evals + statuses via
+  `/v1/requests/:id`).
 
 One datastore, one UI, no extra containers.
 
