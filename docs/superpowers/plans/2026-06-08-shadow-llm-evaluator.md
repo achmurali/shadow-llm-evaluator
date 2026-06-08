@@ -108,8 +108,6 @@ test/
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@testcontainers/postgresql": "^10.16.0",
-    "@testcontainers/redis": "^10.16.0",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
     "@types/uuid": "^10.0.0",
@@ -202,9 +200,12 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['test/**/*.test.ts'],
-    testTimeout: 60_000,       // integration tests spin up containers
+    testTimeout: 60_000,
     hookTimeout: 120_000,
-    pool: 'forks'
+    pool: 'forks',
+    // Integration tests share a local Postgres/Redis; run files sequentially
+    // so per-file isolated databases and Redis flushes don't race.
+    poolOptions: { forks: { singleFork: true } }
   }
 });
 ```
@@ -261,10 +262,11 @@ services:
       retries: 10
 ```
 
-- [ ] **Step 2: Bring infra up**
+- [ ] **Step 2: Validate the compose YAML** (Docker is unavailable in this shell; native Postgres +
+  Redis are already running and used for tests/dev. This file is a shipped artifact.)
 
-Run: `docker compose up -d postgres redis`
-Expected: both containers healthy (`docker compose ps`).
+Run: `python3 -c "import yaml; print(sorted(yaml.safe_load(open('docker-compose.yml'))['services']))"`
+Expected: `['postgres', 'redis']`.
 
 - [ ] **Step 3: Commit**
 
@@ -677,27 +679,58 @@ git commit -m "feat: postgres pool + schema"
 - Test: `test/integration/requests-repo.test.ts` (needs Postgres; uses helper from Task 28's helper — create the helper now)
 - Create: `test/helpers/testcontainers.ts`
 
-- [ ] **Step 1: Create the Testcontainers helper `test/helpers/testcontainers.ts`**
+- [ ] **Step 1: Create the test-services helper `test/helpers/testcontainers.ts`**
+
+> **Environment note:** This dev shell has no Docker, so we use **native local Postgres + Redis**
+> (installed via apt) instead of Testcontainers. The helper reads `TEST_DATABASE_URL` /
+> `TEST_REDIS_URL` (defaulting to the local services) and gives each test file an **isolated
+> database** (created + dropped per `startPg()` call) for the same isolation Testcontainers gave.
+> The `{ container: { stop } }` shape is preserved so test files don't change. The shipped
+> `docker-compose.yml` still provides these services for anyone with Docker.
 
 ```ts
-import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { RedisContainer, StartedRedisContainer } from '@testcontainers/redis';
 import { Pool } from 'pg';
+import { randomBytes } from 'node:crypto';
+import Redis from 'ioredis';
 import { applySchema } from '../../src/shared/db/pool.js';
 
-export async function startPg(): Promise<{ container: StartedPostgreSqlContainer; pool: Pool; url: string }> {
-  const container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const url = container.getConnectionUri();
+const ADMIN_DB_URL = process.env.TEST_DATABASE_URL ?? 'postgres://shadow:shadow@localhost:5432/shadow';
+const REDIS_URL = process.env.TEST_REDIS_URL ?? 'redis://localhost:6379';
+
+function uniqueDbName(): string {
+  return 'test_' + randomBytes(6).toString('hex');
+}
+
+/** Creates an isolated database, applies the schema, and returns a pool to it.
+ *  `container.stop()` drops that database (call AFTER `pool.end()`). */
+export async function startPg(): Promise<{ container: { stop: () => Promise<void> }; pool: Pool; url: string }> {
+  const admin = new Pool({ connectionString: ADMIN_DB_URL });
+  const db = uniqueDbName();
+  await admin.query(`CREATE DATABASE ${db}`);
+  const url = ADMIN_DB_URL.replace(/\/[^/]+$/, `/${db}`);
   const pool = new Pool({ connectionString: url });
   await applySchema(pool, 'db/schema.sql');
+  const container = {
+    stop: async () => {
+      await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+      await admin.end();
+    }
+  };
   return { container, pool, url };
 }
 
-export async function startRedis(): Promise<{ container: StartedRedisContainer; url: string }> {
-  const container = await new RedisContainer('redis:7-alpine').start();
-  return { container, url: container.getConnectionUrl() };
+/** Flushes the local Redis so each file starts clean. `container.stop()` is a no-op. */
+export async function startRedis(): Promise<{ container: { stop: () => Promise<void> }; url: string }> {
+  const client = new Redis(REDIS_URL);
+  await client.flushall();
+  await client.quit();
+  return { container: { stop: async () => {} }, url: REDIS_URL };
 }
 ```
+
+> **Test cleanup contract:** every integration test's teardown calls `await pool.end()` **before**
+> `await pg.container.stop()` (so the database has no open connections when dropped). The tests in
+> this plan already follow that order.
 
 - [ ] **Step 2: Write the failing test `test/integration/requests-repo.test.ts`**
 
@@ -1913,17 +1946,19 @@ git commit -m "feat: sampling decision (overrides + force header)"
 - [ ] **Step 1: Implement `src/shared/queue/queue.ts`**
 
 ```ts
-import { Queue, Worker, JobsOptions, ConnectionOptions } from 'bullmq';
+import { Queue, Worker, JobsOptions } from 'bullmq';
+import IORedis from 'ioredis';
 
 export const QUEUE_NAME = 'evaluations';
 export interface EvalJob { evalId: string; }
 
-export function redisConnection(url: string): ConnectionOptions {
-  return { url } as unknown as ConnectionOptions;
+/** BullMQ requires maxRetriesPerRequest=null on the connection it owns. */
+export function createConnection(redisUrl: string): IORedis {
+  return new IORedis(redisUrl, { maxRetriesPerRequest: null });
 }
 
 export function createQueue(redisUrl: string): Queue<EvalJob> {
-  return new Queue<EvalJob>(QUEUE_NAME, { connection: redisConnection(redisUrl) });
+  return new Queue<EvalJob>(QUEUE_NAME, { connection: createConnection(redisUrl) });
 }
 
 export function defaultJobOpts(attempts: number, backoffMs: number): JobsOptions {
@@ -2572,7 +2607,7 @@ import { ConfigService } from '../shared/config/service.js';
 import { DOInferenceProvider } from '../shared/providers/do-inference.js';
 import { RequestsRepo } from '../shared/db/requests.repo.js';
 import { EvaluationsRepo } from '../shared/db/evaluations.repo.js';
-import { QUEUE_NAME, EvalJob, redisConnection } from '../shared/queue/queue.js';
+import { QUEUE_NAME, EvalJob, createConnection } from '../shared/queue/queue.js';
 import { processJob, ProcessorDeps } from './processor.js';
 
 async function main() {
@@ -2591,7 +2626,7 @@ async function main() {
   const worker = new Worker<EvalJob>(
     QUEUE_NAME,
     async (job) => { await processJob(job.data.evalId, deps); },
-    { connection: redisConnection(env.REDIS_URL), concurrency: env.WORKER_CONCURRENCY }
+    { connection: createConnection(env.REDIS_URL), concurrency: env.WORKER_CONCURRENCY }
   );
 
   worker.on('failed', (job, err) => console.error(`job ${job?.id} failed:`, err.message));
@@ -2726,7 +2761,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 import { Queue } from 'bullmq';
 import { startPg, startRedis } from '../helpers/testcontainers.js';
-import { createQueue, enqueueEval, defaultJobOpts, QUEUE_NAME, redisConnection } from '../../src/shared/queue/queue.js';
+import { createQueue, enqueueEval, defaultJobOpts, QUEUE_NAME, createConnection } from '../../src/shared/queue/queue.js';
 import { RequestsRepo } from '../../src/shared/db/requests.repo.js';
 import { EvaluationsRepo } from '../../src/shared/db/evaluations.repo.js';
 import { ConfigRepo } from '../../src/shared/db/config.repo.js';
@@ -2763,7 +2798,7 @@ describe('queue + worker e2e', () => {
     } as any;
 
     const worker = new Worker(QUEUE_NAME, async (job) => processJob(job.data.evalId, deps),
-      { connection: redisConnection(redisUrl), concurrency: 2 });
+      { connection: createConnection(redisUrl), concurrency: 2 });
 
     await enqueueEval(queue, 'ie1', defaultJobOpts(1, 10));
     await enqueueEval(queue, 'ie1', defaultJobOpts(1, 10)); // same jobId -> dedup
@@ -2974,10 +3009,10 @@ COPY public ./public
 CMD ["node", "dist/api/server.js"]
 ```
 
-- [ ] **Step 3: Build the image**
+- [ ] **Step 3: Validate the Dockerfile** (Docker is unavailable in this dev shell — do NOT run `docker build`)
 
-Run: `docker build -f docker/Dockerfile -t shadow-llm-evaluator .`
-Expected: image builds successfully.
+Run: `test -s docker/Dockerfile && grep -q 'CMD \["node", "dist/api/server.js"\]' docker/Dockerfile && echo OK`
+Expected: `OK`. (The image builds wherever Docker exists; it is a shipped artifact, not used to run/test here.)
 
 - [ ] **Step 4: Commit**
 
@@ -3049,10 +3084,10 @@ services:
       redis: { condition: service_healthy }
 ```
 
-- [ ] **Step 2: Bring up the full stack** (requires a real `DO_INFERENCE_KEY` in `.env`)
+- [ ] **Step 2: Validate the compose file** (Docker is unavailable here — do NOT run `docker compose up`)
 
-Run: `docker compose up --build -d`
-Expected: `postgres`, `redis`, `api`, `worker` all running; `curl localhost:8080/healthz` → `{"ok":true}`.
+Run: `python3 -c "import yaml,sys; d=yaml.safe_load(open('docker-compose.yml')); print(sorted(d['services']))"`
+Expected: `['api', 'postgres', 'redis', 'worker']`. (Compose runs wherever Docker exists; in this shell the service runs natively — see README "Run natively".)
 
 - [ ] **Step 3: Commit**
 
@@ -3101,12 +3136,28 @@ flowchart LR
    `completed` (or `failed` after retries).
 4. Track a request at `GET /v1/requests/:requestId`; watch aggregates on the dashboard (`/`).
 
-## Run locally
+## Run locally (Docker)
 ```bash
 cp .env.example .env          # set DO_INFERENCE_KEY (and base URL)
 docker compose up --build -d
 curl localhost:8080/healthz
 open http://localhost:8080/    # dashboard
+```
+
+## Run natively (no Docker)
+For environments without Docker. Requires local Postgres + Redis.
+```bash
+# one-time: install + start services, create the db
+sudo apt-get install -y postgresql redis-server
+sudo service postgresql start && sudo service redis-server start
+sudo -u postgres psql -c "CREATE ROLE shadow LOGIN PASSWORD 'shadow' CREATEDB" \
+                      -c "CREATE DATABASE shadow OWNER shadow"
+
+cp .env.example .env          # set DO_INFERENCE_KEY; DATABASE_URL/REDIS_URL already point at localhost
+npm install && npm run build
+npm run start:api &           # http://localhost:8080
+npm run start:worker &
+curl localhost:8080/healthz
 ```
 
 ### Example request
@@ -3136,10 +3187,12 @@ docker compose up -d --scale api=2 --scale worker=3
 
 ## Tests
 ```bash
-npm run test:unit          # pure logic (no containers)
-npm run test:integration   # spins up Postgres + Redis via Testcontainers (Docker required)
+npm run test:unit          # pure logic, no external services
+npm run test:integration   # uses local Postgres + Redis (override TEST_DATABASE_URL / TEST_REDIS_URL)
 npm test                   # everything
 ```
+Integration tests create an isolated database per test file against the local Postgres and flush
+the local Redis, so they need Postgres + Redis reachable (the "Run natively" services suffice).
 ````
 
 - [ ] **Step 2: Commit**
